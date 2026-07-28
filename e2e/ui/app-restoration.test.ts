@@ -3155,10 +3155,26 @@ async function sendPrompt(page: Page, prompt: string) {
 }
 
 async function startNewConversation(page: Page) {
+  const previousContext = await getCurrentProjectContext(page);
   await page.getByTestId('conversation-history-trigger').click();
   await expect(page.getByTestId('conversation-list')).toBeVisible();
   await page.getByTestId('conversation-history-new').click();
   await expect(page.getByTestId('conversation-list')).toHaveCount(0);
+  await expect
+    .poll(() => {
+      const current = new URL(page.url());
+      const [, projects, projectId, maybeConversations, conversationId] = current.pathname.split('/');
+      if (
+        projects !== 'projects'
+        || projectId !== previousContext.projectId
+        || maybeConversations !== 'conversations'
+        || conversationId == null
+      ) {
+        return false;
+      }
+      return conversationId !== previousContext.conversationId;
+    }, { timeout: T.medium })
+    .toBe(true);
 }
 
 function tabBySuffix(page: Page, name: string): Locator {
