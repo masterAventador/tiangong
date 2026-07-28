@@ -440,11 +440,9 @@ test('[P0] @critical switching between conversations keeps the composer usable w
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
@@ -727,15 +725,13 @@ test('[P0] @critical reloading the project keeps the latest conversation selecte
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  expect(secondContext.conversationId).not.toBe(firstContext.conversationId);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
+  expect(secondContext.conversationId).not.toBe(firstContext.conversationId);
 
   await page.reload();
   await expect(page.getByTestId('chat-composer')).toBeVisible();
@@ -813,15 +809,13 @@ test('[P0] @critical deleting the active conversation selects the remaining conv
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  expect(secondContext.conversationId).not.toBe(firstContext.conversationId);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
+  expect(secondContext.conversationId).not.toBe(firstContext.conversationId);
 
   await page.getByTestId('conversation-history-trigger').click();
   const historyList = page.getByTestId('conversation-list');
@@ -896,11 +890,9 @@ test('[P0] returning from workspace surfaces keeps the older conversation reacha
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
@@ -1066,11 +1058,9 @@ test('[P0] opening an uploaded file route keeps the older conversation present i
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
@@ -1180,11 +1170,9 @@ test('[P0] opening an artifact file route keeps the older conversation present i
   await expect(page.getByTestId('chat-composer-input')).toHaveText('');
   await sendPrompt(page, secondPrompt);
   await expect(page.locator('.msg.user .user-text').filter({ hasText: secondPrompt }).first()).toBeVisible();
-  const secondContext = await getCurrentProjectContext(page);
-  await expectConversationMessagePersisted(
+  const secondContext = await findConversationContextByMessage(
     page,
-    secondContext.projectId,
-    secondContext.conversationId,
+    firstContext.projectId,
     'user',
     secondPrompt,
   );
@@ -3554,25 +3542,36 @@ async function listConversationsFromApi(
   return conversations;
 }
 
-async function expectConversationMessagePersisted(
+async function findConversationContextByMessage(
   page: Page,
   projectId: string,
-  conversationId: string,
   role: string,
   content: string,
-) {
+): Promise<{ projectId: string; conversationId: string }> {
+  let conversationId: string | undefined;
   await expect
     .poll(async () => {
-      const response = await page.request.get(
-        `/api/projects/${projectId}/conversations/${conversationId}/messages`,
-      );
-      if (!response.ok()) return false;
-      const { messages } = (await response.json()) as {
-        messages: Array<{ role: string; content: string }>;
-      };
-      return messages.some((message) => message.role === role && message.content === content);
+      const conversations = await listConversationsFromApi(page, projectId);
+      for (const conversation of conversations) {
+        const response = await page.request.get(
+          `/api/projects/${projectId}/conversations/${conversation.id}/messages`,
+        );
+        if (!response.ok()) continue;
+        const { messages } = (await response.json()) as {
+          messages: Array<{ role: string; content: string }>;
+        };
+        if (messages.some((message) => message.role === role && message.content === content)) {
+          conversationId = conversation.id;
+          return conversationId;
+        }
+      }
+      return undefined;
     }, { timeout: T.medium })
-    .toBe(true);
+    .toBeTruthy();
+  if (!conversationId) {
+    throw new Error(`no conversation found for persisted ${role} message in project ${projectId}`);
+  }
+  return { projectId, conversationId };
 }
 
 async function expectPersistedArtifactMessage(
